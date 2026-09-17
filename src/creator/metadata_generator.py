@@ -1,61 +1,54 @@
-import json
 import logging
+
 from src.models import ContentBrief, PinMetadata
-from src.utils.config import get_groq_client, call_groq_with_retry, get_posting_config
 
 logger = logging.getLogger(__name__)
 
 
-def _build_description_link_text(destination_link: str) -> str:
-    """Append a call-to-action link line to the description."""
-    return f"\n\nShop now: {destination_link}"
+def _topic_name(keyword: str) -> str:
+    text = keyword.strip()
+    for suffix in (" travel guide", " guide"):
+        if text.lower().endswith(suffix):
+            return text[: -len(suffix)].strip()
+    return text
+
+
+def _board_for(topic: str) -> str:
+    lower = topic.lower()
+    if any(city in lower for city in ("marrakech", "agadir", "taghazout", "essaouira", "dakhla", "morocco")):
+        return "Morocco Travel"
+    if any(city in lower for city in ("paris", "barcelona", "rome", "lisbon", "london", "amsterdam", "istanbul")):
+        return "Europe Travel"
+    if any(city in lower for city in ("bali", "dubai", "tokyo")):
+        return "Asia Travel"
+    return "Travel Guides"
 
 
 async def generate_metadata(brief: ContentBrief, config: dict) -> PinMetadata:
     """
-    Call Groq API to generate pin metadata. Uses OpenAI library with different base_url.
+    Phase 2 local metadata generator used to validate the review workflow
+    without any external text-model API key.
     """
-    client = get_groq_client()
-    model = config.get("ai", {}).get("text_model", "llama-3.3-70b-versatile")
+    topic = _topic_name(brief.target_keyword)
+    title = f"{topic}: practical travel guide"
 
-    response_text = await call_groq_with_retry(
-        client,
-        model=model,
-        messages=[
-            {"role": "system", "content": "You are a Pinterest SEO expert. Return ONLY valid JSON."},
-            {"role": "user", "content": f"""Generate Pinterest pin metadata for: "{brief.target_keyword}"
-Related terms: {brief.related_terms}
-Content type: {brief.content_type}
-
-Return JSON with these exact keys:
-- title: max 100 chars, keyword at start, click-worthy
-- description: max 500 chars, natural language, end with 3-5 hashtags
-- alt_text: max 500 chars, descriptive, keyword-rich
-- suggested_board: best board name for this pin
-- hashtags: list of 3-5 relevant hashtags"""}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.7,
-        max_tokens=500,
+    description = (
+        f"Plan your trip to {topic} with practical ideas on where to stay, "
+        f"what to do, when to go, and how to make the most of your visit. "
+        f"Explore more travel planning inspiration on BookingsBeacon. "
+        f"#Travel #TravelGuide #{topic.replace(' ', '')}"
     )
 
-    data = json.loads(response_text)
-
-    posting_config = get_posting_config(config)
-    link_mode = posting_config.get("destination_link_mode", "none")
-    destination_link = posting_config.get("default_destination_link", "")
-
-    description = data["description"][:500]
-
-    if link_mode in ("description_only", "both") and destination_link:
-        description += _build_description_link_text(destination_link)
+    alt_text = (
+        f"Travel inspiration for {topic}, prepared for a BookingsBeacon Pinterest guide."
+    )
 
     return PinMetadata(
-        title=data["title"][:100],
-        description=description,
-        alt_text=data["alt_text"][:500],
-        suggested_board=data.get("suggested_board", ""),
-        hashtags=data.get("hashtags", []),
-        destination_link_mode=link_mode,
-        default_destination_link=destination_link,
+        title=title[:100],
+        description=description[:500],
+        alt_text=alt_text[:500],
+        suggested_board=_board_for(topic),
+        hashtags=["#Travel", "#TravelGuide", f"#{topic.replace(' ', '')}"],
+        destination_link_mode="none",
+        default_destination_link="",
     )
