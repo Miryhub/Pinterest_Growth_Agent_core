@@ -82,32 +82,48 @@ class PinterestSandboxPublisher:
             "media_source": self._image_media_source(pin.image_path),
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+        # Lock this Pin before the network request so a second command cannot
+        # accidentally submit the same approved draft concurrently.
+        self.db.update_pin_fields(pin_id, status="PUBLISHING")
+        self.db.log_action("sandbox_publish_started", {"pin_id": pin_id})
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    endpoint,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"Pinterest Sandbox returned HTTP {response.status_code}: {response.text[:300]}"
+                )
+
+            data = response.json()
+            pinterest_id = str(data.get("id", "")).strip()
+            if not pinterest_id:
+                raise RuntimeError("Pinterest Sandbox response did not include a Pin id")
+
+            sandbox_ref = f"sandbox:{pinterest_id}"
+            self.db.update_pin_posted(
+                pin_id,
+                "PUBLISHED",
+                sandbox_ref,
+                "sandbox_publish",
+                {"pin_id": pin_id, "pinterest_id": pinterest_id},
             )
+            return sandbox_ref
 
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"Pinterest Sandbox returned HTTP {response.status_code}: {response.text[:300]}"
+        except Exception as exc:
+            # Do not automatically retry an uncertain network/API failure.
+            # Human review is required before another publish attempt.
+            self.db.update_pin_fields(pin_id, status="NEEDS_PUBLISH_REVIEW")
+            self.db.log_action(
+                "sandbox_publish_uncertain",
+                {"pin_id": pin_id, "error": str(exc)},
             )
-
-        data = response.json()
-        pinterest_id = str(data.get("id", "")).strip()
-        if not pinterest_id:
-            raise RuntimeError("Pinterest Sandbox response did not include a Pin id")
-
-        sandbox_url = f"https://www.pinterest.com/pin/{pinterest_id}/"
-        self.db.update_pin_posted(
-            pin_id,
-            "PUBLISHED",
-            sandbox_url,
-            "sandbox_publish",
-            {"pin_id": pin_id, "pinterest_id": pinterest_id},
-        )
-        return sandbox_url
+            raise
