@@ -250,7 +250,7 @@ class Database:
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
                 "UPDATE pins SET status = ?, pinterest_url = ?, posted_at = ? WHERE id = ?",
-                (status, url, now if status == "posted" else None, pin_id),
+                (status, url, now if status.upper() == "PUBLISHED" else None, pin_id),
             )
             conn.execute(
                 "INSERT INTO agent_log (action, details) VALUES (?, ?)",
