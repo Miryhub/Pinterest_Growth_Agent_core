@@ -261,13 +261,38 @@ class Database:
             conn.close()
 
     def get_pending_pins(self) -> list[Pin]:
+        return self.get_pins_by_status("PENDING_REVIEW")
+
+    def get_pin(self, pin_id: int) -> Pin | None:
         conn = self._connect()
         try:
-            cursor = conn.execute(
-                "SELECT * FROM pins WHERE status = 'pending' ORDER BY scheduled_at ASC"
-            )
-            rows = cursor.fetchall()
+            row = conn.execute("SELECT * FROM pins WHERE id = ?", (pin_id,)).fetchone()
+            return self._row_to_pin(row) if row else None
+        finally:
+            conn.close()
+
+    def get_pins_by_status(self, status: str) -> list[Pin]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM pins WHERE status = ? ORDER BY created_at ASC",
+                (status,),
+            ).fetchall()
             return [self._row_to_pin(row) for row in rows]
+        finally:
+            conn.close()
+
+    def update_pin_fields(self, pin_id: int, **fields) -> None:
+        allowed = {"title", "description", "alt_text", "board_name", "status"}
+        updates = {key: value for key, value in fields.items() if key in allowed}
+        if not updates:
+            return
+        conn = self._connect()
+        try:
+            assignments = ", ".join(f"{key} = ?" for key in updates)
+            params = list(updates.values()) + [pin_id]
+            conn.execute(f"UPDATE pins SET {assignments} WHERE id = ?", params)
+            conn.commit()
         finally:
             conn.close()
 
@@ -369,7 +394,7 @@ class Database:
             target_keyword=row["target_keyword"] or "",
             board_name=row["board_name"] or "",
             content_type=row["content_type"] or "seo",
-            status=row["status"] or "pending",
+            status=row["status"] or "PENDING_REVIEW",
             scheduled_at=datetime.fromisoformat(row["scheduled_at"]) if row["scheduled_at"] else None,
             posted_at=datetime.fromisoformat(row["posted_at"]) if row["posted_at"] else None,
             pinterest_url=row["pinterest_url"] or "",
