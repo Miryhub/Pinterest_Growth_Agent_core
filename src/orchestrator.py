@@ -196,12 +196,14 @@ def start_scheduler(config: dict) -> None:
     db.initialize()
 
     start_hour = config.get("schedule", {}).get("start_hour", 8)
+    def scheduled_draft_cycle() -> None:
+        asyncio.run(run_daily_cycle(db, config))
+
     scheduler.add_job(
-        run_daily_cycle,
+        scheduled_draft_cycle,
         "cron",
         hour=start_hour,
         minute=0,
-        args=[db, config],
         id="daily_draft_cycle",
         name="BookingsBeacon Pinterest Draft Cycle",
     )
