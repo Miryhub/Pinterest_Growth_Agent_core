@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -98,6 +100,30 @@ def review_show(pin_id: int):
         f"[bold]Suggested time:[/bold] {pin.scheduled_at or '-'}"
     )
     console.print(Panel(body, title=f"Pin #{pin.id}", expand=False))
+
+
+@app.command("review-open")
+def review_open(pin_id: int):
+    """Open the generated Pin image in the default Windows image viewer."""
+    queue = ReviewQueue(get_db())
+    try:
+        pin = queue.show(pin_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    image_path = Path(pin.image_path)
+    if not image_path.exists():
+        raise typer.BadParameter(f"Image not found: {pin.image_path}")
+
+    try:
+        os.startfile(str(image_path.resolve()))
+    except AttributeError:
+        raise typer.BadParameter("review-open is currently supported on Windows only")
+
+    console.print(
+        f"[bold green]Opened image for Pin #{pin.id}.[/bold green] "
+        f"{image_path}"
+    )
 
 
 @app.command("review-approve")
