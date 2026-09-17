@@ -33,6 +33,11 @@ posting:
   destination_link_mode: "none"
   default_destination_link: "https://bookingsbeacon.com"
 
+publishing:
+  enabled: false
+  environment: "sandbox"
+  api_base_url: "https://api-sandbox.pinterest.com/v5"
+
 ai:
   text_provider: "groq"
   text_model: "llama-3.3-70b-versatile"
