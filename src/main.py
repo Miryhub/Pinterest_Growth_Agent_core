@@ -1,95 +1,176 @@
-import typer
 import asyncio
 import logging
+
+import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
+
+from src.orchestrator import run_daily_cycle, start_scheduler
+from src.review.queue_service import ReviewQueue
+from src.store.database import Database
 from src.utils.config import load_config
 from src.utils.logger import setup_logging
-from src.store.database import Database
-from src.orchestrator import run_daily_cycle, start_scheduler
 
-app = typer.Typer(help="Pinterest Growth Agent — AI-powered Pinterest automation.")
+app = typer.Typer(help="BookingsBeacon Pinterest Phase 2 — draft-first workflow.")
 console = Console()
 logger = logging.getLogger(__name__)
 
+
+def get_db() -> Database:
+    config = load_config()
+    db = Database(config["paths"]["database"])
+    db.initialize()
+    return db
+
+
 @app.callback()
 def main():
-    """Pinterest Growth Agent setup."""
+    """BookingsBeacon Pinterest Phase 2."""
     setup_logging()
+
 
 @app.command()
 def start():
-    """Start the APScheduler loop for daily Pinterest growth."""
+    """Start the draft-only scheduler. This never publishes to Pinterest."""
     config = load_config()
     db = Database(config["paths"]["database"])
     db.initialize()
-    console.print("[bold green]Starting APScheduler background loop...[/bold green]")
+    console.print("[bold green]Starting draft-only scheduler...[/bold green]")
     start_scheduler(config)
 
+
 @app.command()
-def run_now(
-    force: bool = typer.Option(False, "--force", help="Bypass daily safety limits"),
-    link: str = typer.Option("", "--link", help="Override default_destination_link for this run"),
-):
-    """Force a single daily cycle immediately."""
+def run_now():
+    """Generate one draft cycle immediately. This never publishes to Pinterest."""
     config = load_config()
-    if link:
-        config.setdefault("posting", {})["default_destination_link"] = link
     db = Database(config["paths"]["database"])
     db.initialize()
-    console.print(f"[bold cyan]Starting manual daily cycle...[/bold cyan]")
-    asyncio.run(run_daily_cycle(db, config, force=force))
+    console.print("[bold cyan]Generating draft Pins for review...[/bold cyan]")
+    asyncio.run(run_daily_cycle(db, config))
+
+
+@app.command("review-list")
+def review_list():
+    """List Pins waiting for human review."""
+    queue = ReviewQueue(get_db())
+    pins = queue.list_pending()
+
+    table = Table(title="BookingsBeacon Pinterest Review Queue")
+    table.add_column("ID", justify="right")
+    table.add_column("Status")
+    table.add_column("Keyword")
+    table.add_column("Title")
+    table.add_column("Board")
+
+    for pin in pins:
+        table.add_row(
+            str(pin.id),
+            pin.status,
+            pin.target_keyword,
+            pin.title,
+            pin.board_name,
+        )
+
+    console.print(table)
+    if not pins:
+        console.print("[dim]No Pins are waiting for review.[/dim]")
+
+
+@app.command("review-show")
+def review_show(pin_id: int):
+    """Show one draft in detail."""
+    queue = ReviewQueue(get_db())
+    try:
+        pin = queue.show(pin_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    body = (
+        f"[bold]Status:[/bold] {pin.status}\n"
+        f"[bold]Keyword:[/bold] {pin.target_keyword}\n"
+        f"[bold]Title:[/bold] {pin.title}\n"
+        f"[bold]Description:[/bold] {pin.description}\n"
+        f"[bold]Alt text:[/bold] {pin.alt_text}\n"
+        f"[bold]Board:[/bold] {pin.board_name}\n"
+        f"[bold]Image:[/bold] {pin.image_path}\n"
+        f"[bold]Suggested time:[/bold] {pin.scheduled_at or '-'}"
+    )
+    console.print(Panel(body, title=f"Pin #{pin.id}", expand=False))
+
+
+@app.command("review-approve")
+def review_approve(pin_id: int):
+    """Approve one Pin. Approval does NOT publish it."""
+    queue = ReviewQueue(get_db())
+    try:
+        pin = queue.approve(pin_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    console.print(
+        f"[bold green]Pin #{pin.id} approved.[/bold green] "
+        "It has NOT been published."
+    )
+
+
+@app.command("review-reject")
+def review_reject(pin_id: int):
+    """Reject one Pin."""
+    queue = ReviewQueue(get_db())
+    try:
+        pin = queue.reject(pin_id)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    console.print(f"[bold red]Pin #{pin.id} rejected.[/bold red]")
+
+
+@app.command("review-edit")
+def review_edit(
+    pin_id: int,
+    title: str | None = typer.Option(None, "--title"),
+    description: str | None = typer.Option(None, "--description"),
+    alt_text: str | None = typer.Option(None, "--alt-text"),
+    board_name: str | None = typer.Option(None, "--board"),
+):
+    """Edit a Pin and return it to PENDING_REVIEW."""
+    queue = ReviewQueue(get_db())
+    try:
+        pin = queue.edit(
+            pin_id,
+            title=title,
+            description=description,
+            alt_text=alt_text,
+            board_name=board_name,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    console.print(
+        f"[bold yellow]Pin #{pin.id} updated.[/bold yellow] "
+        f"Status: {pin.status}"
+    )
+
 
 @app.command()
 def stats():
-    """Show a rich terminal dashboard of agent status and metrics."""
-    config = load_config()
-    db = Database(config["paths"]["database"])
-    db.initialize()
-
+    """Show a small Phase 2 status dashboard."""
+    db = get_db()
     recent_pins = db.get_recent_pins(days=7)
-    total_pins = len(recent_pins)
-    posted = sum(1 for p in recent_pins if p.status == "posted")
-    top_keywords = db.get_top_keywords(limit=10)
+    pending = sum(1 for p in recent_pins if p.status == "PENDING_REVIEW")
+    approved = sum(1 for p in recent_pins if p.status == "APPROVED")
+    rejected = sum(1 for p in recent_pins if p.status == "REJECTED")
+    published = sum(1 for p in recent_pins if p.status == "PUBLISHED")
 
-    conn = db._connect()
-    try:
-        cursor = conn.execute("SELECT COUNT(*) as count FROM keywords")
-        kw_count = cursor.fetchone()[0]
-        cursor2 = conn.execute("SELECT COUNT(*) as count FROM trends")
-        trend_count = cursor2.fetchone()[0]
-        cursor3 = conn.execute("SELECT action, created_at FROM agent_log ORDER BY created_at DESC LIMIT 5")
-        recent_actions = cursor3.fetchall()
-    finally:
-        conn.close()
-
-    # Create Summary Panel
     summary_text = (
-        f"Pins Posted (7d): [bold blue]{posted}[/bold blue] / {total_pins}\n"
-        f"Keywords in DB: [bold blue]{kw_count}[/bold blue]\n"
-        f"Trends in DB: [bold blue]{trend_count}[/bold blue]"
+        f"Pending review: [bold blue]{pending}[/bold blue]\n"
+        f"Approved: [bold green]{approved}[/bold green]\n"
+        f"Rejected: [bold red]{rejected}[/bold red]\n"
+        f"Published: [bold]{published}[/bold]"
     )
-    console.print(Panel(summary_text, title="PGA Status Summary", expand=False))
+    console.print(Panel(summary_text, title="BookingsBeacon Phase 2", expand=False))
 
-    # Top Keywords Table
-    if top_keywords:
-        table = Table(title="Top Keywords")
-        table.add_column("Keyword", style="cyan")
-        table.add_column("Score", justify="right", style="green")
-        
-        for kw in top_keywords:
-            table.add_row(kw.term, f"{kw.performance_score:.2f}")
-        console.print(table)
-
-    # Recent Actions
-    if recent_actions:
-        action_table = Table(title="Recent Actions")
-        action_table.add_column("Time", style="dim")
-        action_table.add_column("Action", style="magenta")
-        for action_row in recent_actions:
-            action_table.add_row(action_row[1], action_row[0])
-        console.print(action_table)
 
 if __name__ == "__main__":
     app()
