@@ -7,6 +7,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from src.orchestrator import run_daily_cycle, start_scheduler
+from src.publisher.pinterest_api import PinterestSandboxPublisher
 from src.review.queue_service import ReviewQueue
 from src.store.database import Database
 from src.utils.config import load_config
@@ -153,6 +154,49 @@ def review_edit(
     )
 
 
+@app.command("publish-sandbox")
+def publish_sandbox(pin_id: int):
+    """Publish one APPROVED Pin to Pinterest Sandbox after explicit confirmation."""
+    config = load_config()
+    db = Database(config["paths"]["database"])
+    db.initialize()
+
+    pin = db.get_pin(pin_id)
+    if pin is None:
+        raise typer.BadParameter(f"Pin {pin_id} not found")
+    if pin.status != "APPROVED":
+        raise typer.BadParameter(
+            f"Pin {pin_id} must be APPROVED before Sandbox publishing; current status is {pin.status}"
+        )
+
+    console.print(
+        Panel(
+            f"[bold]Pin #{pin.id}[/bold]\n"
+            f"Title: {pin.title}\n"
+            f"Board: {pin.board_name}\n"
+            f"Status: {pin.status}\n\n"
+            "[yellow]Target: Pinterest Sandbox only[/yellow]",
+            title="Publish confirmation",
+            expand=False,
+        )
+    )
+
+    if not typer.confirm("Publish this approved Pin to Pinterest Sandbox?"):
+        console.print("[dim]Cancelled. Nothing was published.[/dim]")
+        raise typer.Exit()
+
+    publisher = PinterestSandboxPublisher(db, config)
+    try:
+        ref = asyncio.run(publisher.publish(pin_id))
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc))
+
+    console.print(
+        f"[bold green]Pin #{pin_id} published to Pinterest Sandbox.[/bold green] "
+        f"Reference: {ref}"
+    )
+
+
 @app.command()
 def stats():
     """Show a small Phase 2 status dashboard."""
@@ -162,12 +206,16 @@ def stats():
     approved = sum(1 for p in recent_pins if p.status == "APPROVED")
     rejected = sum(1 for p in recent_pins if p.status == "REJECTED")
     published = sum(1 for p in recent_pins if p.status == "PUBLISHED")
+    needs_publish_review = sum(
+        1 for p in recent_pins if p.status == "NEEDS_PUBLISH_REVIEW"
+    )
 
     summary_text = (
         f"Pending review: [bold blue]{pending}[/bold blue]\n"
         f"Approved: [bold green]{approved}[/bold green]\n"
         f"Rejected: [bold red]{rejected}[/bold red]\n"
-        f"Published: [bold]{published}[/bold]"
+        f"Published: [bold]{published}[/bold]\n"
+        f"Needs publish review: [bold yellow]{needs_publish_review}[/bold yellow]"
     )
     console.print(Panel(summary_text, title="BookingsBeacon Phase 2", expand=False))
 
