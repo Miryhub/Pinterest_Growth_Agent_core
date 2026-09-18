@@ -10,6 +10,8 @@ from rich.table import Table
 
 from src.orchestrator import run_daily_cycle, start_scheduler
 from src.publisher.pinterest_api import PinterestSandboxPublisher
+from src.creator.image_generator import generate_image
+from src.models import ContentBrief
 from src.review.queue_service import ReviewQueue
 from src.store.database import Database
 from src.utils.config import load_config
@@ -123,6 +125,53 @@ def review_open(pin_id: int):
     console.print(
         f"[bold green]Opened image for Pin #{pin.id}.[/bold green] "
         f"{image_path}"
+    )
+
+
+@app.command("review-regenerate-image")
+def review_regenerate_image(pin_id: int):
+    """Generate a fresh image for an existing review Pin and keep it in PENDING_REVIEW."""
+    config = load_config()
+    db = Database(config["paths"]["database"])
+    db.initialize()
+
+    pin = db.get_pin(pin_id)
+    if pin is None:
+        raise typer.BadParameter(f"Pin {pin_id} not found")
+    if pin.status not in {"PENDING_REVIEW", "APPROVED"}:
+        raise typer.BadParameter(
+            f"Pin {pin_id} cannot regenerate image while status is {pin.status}"
+        )
+
+    brief = ContentBrief(
+        target_keyword=pin.target_keyword,
+        content_type=pin.content_type,
+        priority=1,
+        related_terms=[],
+        board_name=pin.board_name,
+    )
+
+    image_path, image_hash = asyncio.run(generate_image(brief, config, retry=True))
+
+    if db.hash_exists(image_hash):
+        raise typer.BadParameter(
+            "The image service returned a duplicate image. Run the command again for another variation."
+        )
+
+    db.update_pin_fields(
+        pin_id,
+        image_path=image_path,
+        image_hash=image_hash,
+        status="PENDING_REVIEW",
+    )
+    db.log_action(
+        "review_image_regenerated",
+        {"pin_id": pin_id, "image_path": image_path},
+    )
+
+    console.print(
+        f"[bold green]Pin #{pin_id} image regenerated.[/bold green] "
+        "Status: PENDING_REVIEW"
     )
 
 
