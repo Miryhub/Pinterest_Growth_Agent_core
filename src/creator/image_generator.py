@@ -1,12 +1,56 @@
 import httpx
 import hashlib
+import io
 import logging
 import random
 import urllib.parse
 from pathlib import Path
+
+from PIL import Image, ImageOps
+
 from src.models import ContentBrief
 
 logger = logging.getLogger(__name__)
+
+CURATED_DESTINATION_IMAGES = {
+    "paris": "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1800&q=88",
+    "barcelona": "https://images.unsplash.com/photo-1539037116277-4db20889f2d4?auto=format&fit=crop&w=1800&q=88",
+    "bali": "https://images.unsplash.com/photo-1537953773345-d172ccf13cf1?auto=format&fit=crop&w=1800&q=88",
+    "marrakech": "https://images.unsplash.com/photo-1597212618440-806262de4f6b?auto=format&fit=crop&w=1800&q=88",
+    "dubai": "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=1800&q=88",
+    "london": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1800&q=88",
+    "rome": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1800&q=88",
+    "lisbon": "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1800&q=88",
+    "amsterdam": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1800&q=88",
+    "istanbul": "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=1800&q=88",
+}
+
+
+def _curated_image_url(keyword: str) -> str | None:
+    lower = keyword.lower()
+    for name, url in CURATED_DESTINATION_IMAGES.items():
+        if name in lower:
+            return url
+    return None
+
+
+async def _download_curated_image(url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+        response = await client.get(url)
+        response.raise_for_status()
+
+    with Image.open(io.BytesIO(response.content)) as image:
+        image = image.convert("RGB")
+        fitted = ImageOps.fit(
+            image,
+            (1000, 1500),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
+        output = io.BytesIO()
+        fitted.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+
 
 DESTINATION_PROMPTS = {
     "paris": (
@@ -71,40 +115,45 @@ async def generate_image(brief: ContentBrief, config: dict, retry: bool = False)
     Falls back to Together AI, then Hugging Face if Pollinations is down.
     If retry=True, adds variation suffix to get a different image.
     """
-    suffix = ", alternate camera angle, different composition" if retry else ""
-    negative = _get_negative_prompts()
-    destination = _destination_prompt(brief.target_keyword)
-    positive_prompt = (
-        f"{destination}, vertical 2:3 composition, clean editorial framing, realistic scale, "
-        f"sharp focus, natural colors, premium travel magazine photography, no text, no logo, no watermark{suffix}"
-    )
+    curated_url = _curated_image_url(brief.target_keyword)
+    if curated_url:
+        logger.info("Using curated BookingsBeacon destination photo for '%s'", brief.target_keyword)
+        image_bytes = await _download_curated_image(curated_url)
+    else:
+        suffix = ", alternate camera angle, different composition" if retry else ""
+        negative = _get_negative_prompts()
+        destination = _destination_prompt(brief.target_keyword)
+        positive_prompt = (
+            f"{destination}, vertical 2:3 composition, clean editorial framing, realistic scale, "
+            f"sharp focus, natural colors, premium travel magazine photography, no text, no logo, no watermark{suffix}"
+        )
 
-    comfy_cfg = config.get("comfyui", {})
-    if comfy_cfg.get("enabled", False):
-        try:
-            logger.info("ComfyUI enabled, trying local generation first...")
-            image_bytes = await _comfyui_fallback(positive_prompt, config, negative=negative)
-        except Exception as e:
-            logger.warning(f"ComfyUI failed: {e}. Falling back to Pollinations.ai...")
+            comfy_cfg = config.get("comfyui", {})
+        if comfy_cfg.get("enabled", False):
+            try:
+                logger.info("ComfyUI enabled, trying local generation first...")
+                image_bytes = await _comfyui_fallback(positive_prompt, config, negative=negative)
+            except Exception as e:
+                logger.warning(f"ComfyUI failed: {e}. Falling back to Pollinations.ai...")
+                try:
+                    image_bytes = await _pollinations_generate(positive_prompt, negative=negative)
+                except httpx.HTTPError as e2:
+                    logger.warning(f"Pollinations.ai failed: {e2}. Trying Together AI fallback...")
+                    try:
+                        image_bytes = await _together_fallback(positive_prompt, config, negative=negative)
+                    except httpx.HTTPError:
+                        logger.warning("Together AI failed. Trying Hugging Face fallback...")
+                        image_bytes = await _huggingface_fallback(positive_prompt, config, negative=negative)
+        else:
             try:
                 image_bytes = await _pollinations_generate(positive_prompt, negative=negative)
-            except httpx.HTTPError as e2:
-                logger.warning(f"Pollinations.ai failed: {e2}. Trying Together AI fallback...")
+            except httpx.HTTPError as e:
+                logger.warning(f"Pollinations.ai failed: {e}. Trying Together AI fallback...")
                 try:
                     image_bytes = await _together_fallback(positive_prompt, config, negative=negative)
                 except httpx.HTTPError:
                     logger.warning("Together AI failed. Trying Hugging Face fallback...")
                     image_bytes = await _huggingface_fallback(positive_prompt, config, negative=negative)
-    else:
-        try:
-            image_bytes = await _pollinations_generate(positive_prompt, negative=negative)
-        except httpx.HTTPError as e:
-            logger.warning(f"Pollinations.ai failed: {e}. Trying Together AI fallback...")
-            try:
-                image_bytes = await _together_fallback(positive_prompt, config, negative=negative)
-            except httpx.HTTPError:
-                logger.warning("Together AI failed. Trying Hugging Face fallback...")
-                image_bytes = await _huggingface_fallback(positive_prompt, config, negative=negative)
 
     image_hash = hashlib.sha256(image_bytes).hexdigest()
 
