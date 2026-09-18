@@ -15,7 +15,11 @@ def _get_negative_prompts() -> str:
         if lines:
             # Join all uncommented lines into a single comma-separated string
             return ", ".join(lines)
-    return "people, person, woman, female, face, humans"
+    return (
+        "watermark, logo, text, caption, distorted landmark, fake architecture, fantasy tower, "
+        "surreal building, duplicate structures, blurry, low resolution, oversaturated, CGI, painting, "
+        "people, person, woman, female, face, humans"
+    )
 
 
 async def generate_image(brief: ContentBrief, config: dict, retry: bool = False) -> tuple[str, str]:
@@ -25,9 +29,13 @@ async def generate_image(brief: ContentBrief, config: dict, retry: bool = False)
     Falls back to Together AI, then Hugging Face if Pollinations is down.
     If retry=True, adds variation suffix to get a different image.
     """
-    suffix = " modern clean style" if retry else ""
+    suffix = ", alternate camera angle, different composition" if retry else ""
     negative = _get_negative_prompts()
-    positive_prompt = f"Pinterest pin style, {brief.target_keyword}, professional photography, 2:3 vertical, clean composition{suffix}"
+    destination = _destination_prompt(brief.target_keyword)
+    positive_prompt = (
+        f"{destination}, vertical 2:3 composition, clean editorial framing, realistic scale, "
+        f"sharp focus, natural colors, premium travel magazine photography, no text, no logo, no watermark{suffix}"
+    )
 
     comfy_cfg = config.get("comfyui", {})
     if comfy_cfg.get("enabled", False):
