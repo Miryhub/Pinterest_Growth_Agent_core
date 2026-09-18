@@ -1,6 +1,7 @@
 import httpx
 import hashlib
 import logging
+import random
 import urllib.parse
 from pathlib import Path
 from src.models import ContentBrief
@@ -81,7 +82,12 @@ async def _pollinations_generate(prompt: str, negative: str = "") -> bytes:
     url = f"https://image.pollinations.ai/prompt/{encoded}"
 
     async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-        params = {"width": 1000, "height": 1500, "nologo": "true"}
+        params = {
+            "width": 1000,
+            "height": 1500,
+            "nologo": "true",
+            "seed": random.randint(1, 2_147_483_647),
+        }
         if negative:
             params["negative"] = negative
         response = await client.get(url, params=params)
