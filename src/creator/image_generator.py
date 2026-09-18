@@ -13,10 +13,7 @@ from src.models import ContentBrief
 logger = logging.getLogger(__name__)
 
 CANVAS_SIZE = (1000, 1500)
-BRAND_MARK_URL = (
-    "https://raw.githubusercontent.com/Miryhub/bookingsbeacon/"
-    "main/public/beacon-mark.png"
-)
+BRAND_MARK_URL = "https://bookingsbeacon.com/beacon-mark.png"
 
 # (horizontal, vertical) focal point used by Pillow ImageOps.fit.
 # Higher vertical values keep more of the lower part of a source photo.
