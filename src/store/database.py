@@ -310,13 +310,19 @@ class Database:
         finally:
             conn.close()
 
-    def hash_exists(self, image_hash: str) -> bool:
+    def hash_exists(self, image_hash: str, exclude_pin_id: int | None = None) -> bool:
         conn = self._connect()
         try:
-            cursor = conn.execute(
-                "SELECT 1 FROM pins WHERE image_hash = ? LIMIT 1",
-                (image_hash,),
-            )
+            if exclude_pin_id is None:
+                cursor = conn.execute(
+                    "SELECT 1 FROM pins WHERE image_hash = ? LIMIT 1",
+                    (image_hash,),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT 1 FROM pins WHERE image_hash = ? AND id != ? LIMIT 1",
+                    (image_hash, exclude_pin_id),
+                )
             return cursor.fetchone() is not None
         finally:
             conn.close()
