@@ -1,40 +1,70 @@
-import httpx
 import hashlib
 import io
+import json
 import logging
-import random
-import urllib.parse
 from pathlib import Path
 
+import httpx
 from PIL import Image, ImageOps
 
 from src.models import ContentBrief
 
 logger = logging.getLogger(__name__)
 
+
 CURATED_DESTINATION_IMAGES = {
-    "paris": "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1800&q=88",
-    "barcelona": "https://images.unsplash.com/photo-1539037116277-4db20889f2d4?auto=format&fit=crop&w=1800&q=88",
-    "bali": "https://images.unsplash.com/photo-1537953773345-d172ccf13cf1?auto=format&fit=crop&w=1800&q=88",
-    "marrakech": "https://images.unsplash.com/photo-1597212618440-806262de4f6b?auto=format&fit=crop&w=1800&q=88",
-    "dubai": "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=1800&q=88",
-    "london": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1800&q=88",
-    "rome": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1800&q=88",
-    "lisbon": "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1800&q=88",
-    "amsterdam": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1800&q=88",
-    "istanbul": "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=1800&q=88",
+    "paris": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1499856871958-5b9627545d1a?auto=format&fit=crop&w=1800&q=88",
+    },
+    "barcelona": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1539037116277-4db20889f2d4?auto=format&fit=crop&w=1800&q=88",
+    },
+    "bali": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1537953773345-d172ccf13cf1?auto=format&fit=crop&w=1800&q=88",
+    },
+    "marrakech": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1597212618440-806262de4f6b?auto=format&fit=crop&w=1800&q=88",
+    },
+    "dubai": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=1800&q=88",
+    },
+    "london": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?auto=format&fit=crop&w=1800&q=88",
+    },
+    "rome": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1552832230-c0197dd311b5?auto=format&fit=crop&w=1800&q=88",
+    },
+    "lisbon": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1800&q=88",
+    },
+    "amsterdam": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1534351590666-13e3e96b5017?auto=format&fit=crop&w=1800&q=88",
+    },
+    "istanbul": {
+        "provider": "Unsplash",
+        "source_url": "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=1800&q=88",
+    },
 }
 
 
-def _curated_image_url(keyword: str) -> str | None:
+def _find_curated_source(keyword: str) -> tuple[str, dict] | None:
     lower = keyword.lower()
-    for name, url in CURATED_DESTINATION_IMAGES.items():
-        if name in lower:
-            return url
+    for destination, source in CURATED_DESTINATION_IMAGES.items():
+        if destination in lower:
+            return destination, source
     return None
 
 
-async def _download_curated_image(url: str) -> bytes:
+async def _download_and_crop(url: str) -> bytes:
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
@@ -52,297 +82,73 @@ async def _download_curated_image(url: str) -> bytes:
         return output.getvalue()
 
 
-DESTINATION_PROMPTS = {
-    "paris": (
-        "Paris, France, authentic Haussmann architecture, Eiffel Tower visible in correct proportions, "
-        "elegant Parisian street scene, soft natural daylight, realistic travel editorial photography, "
-        "high-end tourism magazine aesthetic, accurate urban details, no fantasy architecture"
-    ),
-    "barcelona": (
-        "Barcelona, Spain, authentic Catalan architecture, Sagrada Familia or Gothic Quarter details, "
-        "Mediterranean daylight, warm stone facades, realistic travel editorial photography, "
-        "high-end tourism magazine aesthetic, accurate local architecture, no invented landmarks"
-    ),
-    "bali": (
-        "Bali, Indonesia, authentic tropical landscape, rice terraces or Uluwatu coastal scenery, "
-        "traditional Balinese temple details, lush vegetation, natural tropical light, realistic travel editorial photography, "
-        "high-end tourism magazine aesthetic, no generic Chinese or Japanese architecture"
-    ),
-    "marrakech": (
-        "Marrakech, Morocco, authentic Medina or riad architecture, warm terracotta walls, carved Moroccan doors, "
-        "subtle zellige details, natural golden light, realistic travel editorial photography, "
-        "high-end tourism magazine aesthetic, accurate Moroccan design, no fantasy towers"
-    ),
-    "dubai": (
-        "Dubai, United Arab Emirates, authentic modern skyline, Burj Khalifa or Dubai Marina context, "
-        "clean contemporary architecture, desert haze, realistic travel editorial photography, "
-        "high-end tourism magazine aesthetic, correct landmark proportions, no fictional skyscrapers"
-    ),
-}
-
-
-def _destination_prompt(keyword: str) -> str:
-    lower = keyword.lower()
-    for name, prompt in DESTINATION_PROMPTS.items():
-        if name in lower:
-            return prompt
-
-    return (
-        f"{keyword}, authentic destination-specific travel scene, realistic local architecture and landscape, "
-        "natural light, premium travel editorial photography, accurate geography and landmark details, "
-        "no fantasy elements, no invented architecture"
+def _write_source_metadata(
+    image_path: Path,
+    *,
+    destination: str,
+    keyword: str,
+    provider: str,
+    source_url: str,
+) -> None:
+    metadata = {
+        "destination": destination,
+        "keyword": keyword,
+        "provider": provider,
+        "source_url": source_url,
+        "transformation": "center crop and resize to 1000x1500 PNG",
+        "usage_note": (
+            "Source provenance recorded for review. Verify the provider's current "
+            "license/terms and any attribution requirements before publication."
+        ),
+    }
+    metadata_path = image_path.with_suffix(".source.json")
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
 
-def _get_negative_prompts() -> str:
-    path = Path("negative_prompts.txt")
-    if path.exists():
-        lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
-        if lines:
-            # Join all uncommented lines into a single comma-separated string
-            return ", ".join(lines)
-    return (
-        "watermark, logo, text, caption, distorted landmark, fake architecture, fantasy tower, "
-        "surreal building, duplicate structures, blurry, low resolution, oversaturated, CGI, painting, "
-        "people, person, woman, female, face, humans"
-    )
-
-
-async def generate_image(brief: ContentBrief, config: dict, retry: bool = False) -> tuple[str, str]:
+async def generate_image(
+    brief: ContentBrief,
+    config: dict,
+    retry: bool = False,
+) -> tuple[str, str]:
     """
-    Generate a Pinterest pin image via Pollinations.ai.
-    Returns (image_path, image_hash).
-    Falls back to Together AI, then Hugging Face if Pollinations is down.
-    If retry=True, adds variation suffix to get a different image.
+    Generate a Pinterest-ready image from an approved real-photo source.
+
+    Phase 2 intentionally refuses unapproved/unknown image sources. There is no
+    automatic AI-image fallback here.
     """
-    curated_url = _curated_image_url(brief.target_keyword)
-    if curated_url:
-        logger.info("Using curated BookingsBeacon destination photo for '%s'", brief.target_keyword)
-        image_bytes = await _download_curated_image(curated_url)
-    else:
-        suffix = ", alternate camera angle, different composition" if retry else ""
-        negative = _get_negative_prompts()
-        destination = _destination_prompt(brief.target_keyword)
-        positive_prompt = (
-            f"{destination}, vertical 2:3 composition, clean editorial framing, realistic scale, "
-            f"sharp focus, natural colors, premium travel magazine photography, no text, no logo, no watermark{suffix}"
+    match = _find_curated_source(brief.target_keyword)
+    if match is None:
+        raise RuntimeError(
+            f"No approved real-photo source exists yet for '{brief.target_keyword}'. "
+            "Add a reviewed source before generating this Pin."
         )
 
-            comfy_cfg = config.get("comfyui", {})
-        if comfy_cfg.get("enabled", False):
-            try:
-                logger.info("ComfyUI enabled, trying local generation first...")
-                image_bytes = await _comfyui_fallback(positive_prompt, config, negative=negative)
-            except Exception as e:
-                logger.warning(f"ComfyUI failed: {e}. Falling back to Pollinations.ai...")
-                try:
-                    image_bytes = await _pollinations_generate(positive_prompt, negative=negative)
-                except httpx.HTTPError as e2:
-                    logger.warning(f"Pollinations.ai failed: {e2}. Trying Together AI fallback...")
-                    try:
-                        image_bytes = await _together_fallback(positive_prompt, config, negative=negative)
-                    except httpx.HTTPError:
-                        logger.warning("Together AI failed. Trying Hugging Face fallback...")
-                        image_bytes = await _huggingface_fallback(positive_prompt, config, negative=negative)
-        else:
-            try:
-                image_bytes = await _pollinations_generate(positive_prompt, negative=negative)
-            except httpx.HTTPError as e:
-                logger.warning(f"Pollinations.ai failed: {e}. Trying Together AI fallback...")
-                try:
-                    image_bytes = await _together_fallback(positive_prompt, config, negative=negative)
-                except httpx.HTTPError:
-                    logger.warning("Together AI failed. Trying Hugging Face fallback...")
-                    image_bytes = await _huggingface_fallback(positive_prompt, config, negative=negative)
+    destination, source = match
+    logger.info(
+        "Using approved %s source for '%s'",
+        source["provider"],
+        brief.target_keyword,
+    )
 
+    image_bytes = await _download_and_crop(source["source_url"])
     image_hash = hashlib.sha256(image_bytes).hexdigest()
 
     assets_dir = Path(config.get("paths", {}).get("assets_dir", "assets"))
     assets_dir.mkdir(parents=True, exist_ok=True)
-    image_path = str(assets_dir / f"{image_hash}.png")
 
-    Path(image_path).write_bytes(image_bytes)
-    logger.info(f"Generated image: {image_path}")
-    return image_path, image_hash
+    image_path = assets_dir / f"{image_hash}.png"
+    image_path.write_bytes(image_bytes)
 
+    _write_source_metadata(
+        image_path,
+        destination=destination,
+        keyword=brief.target_keyword,
+        provider=source["provider"],
+        source_url=source["source_url"],
+    )
 
-async def _pollinations_generate(prompt: str, negative: str = "") -> bytes:
-    """Primary: Pollinations.ai — free, no key."""
-    encoded = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded}"
-
-    async with httpx.AsyncClient(timeout=90.0, follow_redirects=True) as client:
-        params = {
-            "width": 1000,
-            "height": 1500,
-            "nologo": "true",
-            "seed": random.randint(1, 2_147_483_647),
-        }
-        if negative:
-            params["negative"] = negative
-        response = await client.get(url, params=params)
-        response.raise_for_status()
-        return response.content
-
-
-async def _together_fallback(prompt: str, config: dict, negative: str = "") -> bytes:
-    """
-    Fallback: Together AI FLUX.1 schnell (free endpoint).
-    Only used if Pollinations is down. Requires TOGETHER_API_KEY in .env.
-    If no key is set, raises an error.
-    """
-    from src.utils.config import get_together_api_key
-    api_key = get_together_api_key()
-    if not api_key:
-        raise Exception("Pollinations.ai is down and no TOGETHER_API_KEY is set in .env")
-
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        json_body = {
-            "model": "black-forest-labs/FLUX.1-schnell-Free",
-            "prompt": prompt,
-            "width": 1024,
-            "height": 1536,
-            "n": 1,
-        }
-        if negative:
-            json_body["negative_prompt"] = negative
-        response = await client.post(
-            "https://api.together.xyz/v1/images/generations",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json=json_body
-        )
-        response.raise_for_status()
-        image_url = response.json()["data"][0]["url"]
-        img_response = await client.get(image_url)
-        return img_response.content
-
-
-async def _huggingface_fallback(prompt: str, config: dict, negative: str = "") -> bytes:
-    """
-    Final fallback: Hugging Face Inference API (free tier).
-    Requires HF_API_KEY in .env. Uses stabilityai/stable-diffusion-xl-base-1.0.
-    """
-    from src.utils.config import get_huggingface_api_key
-    api_key = get_huggingface_api_key()
-    if not api_key:
-        raise Exception("Pollinations.ai and Together AI failed, and no HF_API_KEY is set in .env")
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(
-            "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={
-                "inputs": prompt,
-                "parameters": {
-                    "negative_prompt": negative if negative else None,
-                    "width": 1024,
-                    "height": 1536,
-                    "num_inference_steps": 30,
-                }
-            }
-        )
-        response.raise_for_status()
-        return response.content
-
-
-async def _comfyui_fallback(prompt: str, config: dict, negative: str = "") -> bytes:
-    """
-    Final local fallback: ComfyUI REST API with SDXL.
-    Sends a text2img workflow via API and retrieves the generated image.
-    Uses settings from config.yaml under the 'comfyui' block if provided.
-    """
-    import asyncio
-    import time
-
-    comfy_cfg = config.get("comfyui", {})
-    host = comfy_cfg.get("host", "127.0.0.1")
-    port = comfy_cfg.get("port", 8188)
-    model_name = comfy_cfg.get("model", "sd_xl_base_1.0.safetensors")
-
-    comfy_url = f"http://{host}:{port}"
-
-    workflow = {
-        "3": {
-            "inputs": {"width": 1024, "height": 1536, "batch_size": 1},
-            "class_type": "EmptyLatentImage"
-        },
-        "41": {
-            "inputs": {
-                "text": prompt,
-                "clip": ["12", 1]
-            },
-            "class_type": "CLIPTextEncode"
-        },
-        "51": {
-            "inputs": {
-                "text": negative if negative else "",
-                "clip": ["12", 1]
-            },
-            "class_type": "CLIPTextEncode"
-        },
-        "6": {
-            "inputs": {
-                "seed": int(time.time() * 1000) % 1000000000000000,
-                "steps": 25,
-                "cfg": 7.0,
-                "sampler_name": "euler",
-                "scheduler": "normal",
-                "positive": ["41", 0],
-                "negative": ["51", 0],
-                "latent_image": ["3", 0],
-                "model": ["12", 0],
-                "denoise": 1.0
-            },
-            "class_type": "KSampler"
-        },
-        "7": {
-            "inputs": {
-                "samples": ["6", 0],
-                "vae": ["12", 2]
-            },
-            "class_type": "VAEDecode"
-        },
-        "8": {
-            "inputs": {
-                "images": ["7", 0],
-                "filename_prefix": "pga_pin"
-            },
-            "class_type": "SaveImage"
-        },
-        "12": {
-            "inputs": {
-                "ckpt_name": model_name
-            },
-            "class_type": "CheckpointLoaderSimple"
-        }
-    }
-
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        resp = await client.post(f"{comfy_url}/prompt", json={"prompt": workflow})
-        resp.raise_for_status()
-        result = resp.json()
-        prompt_id = result.get("prompt_id", "")
-
-        for _ in range(90):
-            await asyncio.sleep(2)
-            history_resp = await client.get(f"{comfy_url}/history/{prompt_id}")
-            if history_resp.status_code == 200:
-                history = history_resp.json()
-                if prompt_id in history and history[prompt_id].get("outputs"):
-                    outputs = history[prompt_id]["outputs"]
-                    for node_id, node_output in outputs.items():
-                        if "images" in node_output:
-                            image_data = node_output["images"][0]
-                            image_resp = await client.get(
-                                f"{comfy_url}/view",
-                                params={
-                                    "filename": image_data["filename"],
-                                    "type": "output",
-                                    "subfolder": image_data.get("subfolder", "")
-                                }
-                            )
-                            image_resp.raise_for_status()
-                            return image_resp.content
-            await asyncio.sleep(2)
-
-    raise Exception("ComfyUI image generation timed out")
+    logger.info("Prepared curated image: %s", image_path)
+    return str(image_path), image_hash
