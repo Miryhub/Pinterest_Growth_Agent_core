@@ -283,7 +283,7 @@ class Database:
             conn.close()
 
     def update_pin_fields(self, pin_id: int, **fields) -> None:
-        allowed = {"title", "description", "alt_text", "board_name", "status"}
+        allowed = {"title", "description", "alt_text", "board_name", "status", "image_path", "image_hash"}
         updates = {key: value for key, value in fields.items() if key in allowed}
         if not updates:
             return
