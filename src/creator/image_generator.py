@@ -2,15 +2,36 @@ import hashlib
 import io
 import json
 import logging
+import textwrap
 from pathlib import Path
 
 import httpx
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from src.models import ContentBrief
 
 logger = logging.getLogger(__name__)
 
+CANVAS_SIZE = (1000, 1500)
+BRAND_MARK_URL = (
+    "https://raw.githubusercontent.com/Miryhub/bookingsbeacon/"
+    "main/public/beacon-mark.png"
+)
+
+# (horizontal, vertical) focal point used by Pillow ImageOps.fit.
+# Higher vertical values keep more of the lower part of a source photo.
+SMART_CROP_CENTERING = {
+    "paris": (0.50, 0.72),
+    "barcelona": (0.50, 0.58),
+    "bali": (0.50, 0.50),
+    "marrakech": (0.50, 0.54),
+    "dubai": (0.50, 0.58),
+    "london": (0.50, 0.55),
+    "rome": (0.50, 0.56),
+    "lisbon": (0.50, 0.56),
+    "amsterdam": (0.50, 0.55),
+    "istanbul": (0.50, 0.55),
+}
 
 CURATED_DESTINATION_IMAGES = {
     "paris": {
@@ -64,22 +85,136 @@ def _find_curated_source(keyword: str) -> tuple[str, dict] | None:
     return None
 
 
-async def _download_and_crop(url: str) -> bytes:
+def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    candidates = []
+    if bold:
+        candidates.extend(
+            [
+                "C:/Windows/Fonts/arialbd.ttf",
+                "C:/Windows/Fonts/segoeuib.ttf",
+                "DejaVuSans-Bold.ttf",
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                "C:/Windows/Fonts/arial.ttf",
+                "C:/Windows/Fonts/segoeui.ttf",
+                "DejaVuSans.ttf",
+            ]
+        )
+
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _display_title(keyword: str) -> str:
+    title = keyword.strip()
+    for suffix in (" travel guide", " guide"):
+        if title.lower().endswith(suffix):
+            title = title[: -len(suffix)].strip()
+            break
+    return f"{title.title()} Travel Guide"
+
+
+async def _download_bytes(url: str) -> bytes:
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
+        return response.content
 
-    with Image.open(io.BytesIO(response.content)) as image:
+
+async def _download_and_smart_crop(url: str, destination: str) -> Image.Image:
+    raw = await _download_bytes(url)
+    centering = SMART_CROP_CENTERING.get(destination, (0.5, 0.5))
+
+    with Image.open(io.BytesIO(raw)) as image:
         image = image.convert("RGB")
-        fitted = ImageOps.fit(
+        return ImageOps.fit(
             image,
-            (1000, 1500),
+            CANVAS_SIZE,
             method=Image.Resampling.LANCZOS,
-            centering=(0.5, 0.5),
+            centering=centering,
         )
-        output = io.BytesIO()
-        fitted.save(output, format="PNG", optimize=True)
-        return output.getvalue()
+
+
+async def _load_brand_mark() -> Image.Image | None:
+    try:
+        raw = await _download_bytes(BRAND_MARK_URL)
+        with Image.open(io.BytesIO(raw)) as mark:
+            mark = mark.convert("RGBA")
+            mark.thumbnail((82, 82), Image.Resampling.LANCZOS)
+            return mark.copy()
+    except Exception as exc:
+        logger.warning("Could not load BookingsBeacon beacon mark: %s", exc)
+        return None
+
+
+async def _apply_bookingsbeacon_template(
+    image: Image.Image,
+    keyword: str,
+) -> Image.Image:
+    canvas = image.convert("RGBA")
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+
+    # Soft bottom gradient so text remains readable while the photo stays dominant.
+    gradient_top = 1050
+    gradient_height = CANVAS_SIZE[1] - gradient_top
+    for offset in range(gradient_height):
+        progress = offset / max(gradient_height - 1, 1)
+        alpha = int(18 + (168 * progress))
+        ImageDraw.Draw(overlay).line(
+            [(0, gradient_top + offset), (CANVAS_SIZE[0], gradient_top + offset)],
+            fill=(5, 12, 18, alpha),
+            width=1,
+        )
+
+    canvas = Image.alpha_composite(canvas, overlay)
+    draw = ImageDraw.Draw(canvas)
+
+    title_font = _load_font(64, bold=True)
+    small_font = _load_font(30, bold=False)
+
+    title = _display_title(keyword)
+    wrapped = textwrap.wrap(title, width=24)
+    if len(wrapped) > 2:
+        wrapped = wrapped[:2]
+    title_text = "\n".join(wrapped)
+
+    title_y = 1190 if len(wrapped) == 1 else 1115
+    draw.multiline_text(
+        (68, title_y),
+        title_text,
+        font=title_font,
+        fill=(255, 255, 255, 255),
+        spacing=8,
+        stroke_width=2,
+        stroke_fill=(0, 0, 0, 105),
+    )
+
+    mark = await _load_brand_mark()
+    brand_y = 1400
+    brand_x = 68
+    if mark is not None:
+        mark_y = brand_y - 56
+        canvas.alpha_composite(mark, (brand_x, mark_y))
+        brand_x += mark.width + 18
+
+    draw = ImageDraw.Draw(canvas)
+    draw.text(
+        (brand_x, brand_y - 35),
+        "bookingsbeacon.com",
+        font=small_font,
+        fill=(255, 255, 255, 230),
+        stroke_width=1,
+        stroke_fill=(0, 0, 0, 90),
+    )
+
+    return canvas.convert("RGB")
 
 
 def _write_source_metadata(
@@ -90,12 +225,17 @@ def _write_source_metadata(
     provider: str,
     source_url: str,
 ) -> None:
+    centering = SMART_CROP_CENTERING.get(destination, (0.5, 0.5))
     metadata = {
         "destination": destination,
         "keyword": keyword,
         "provider": provider,
         "source_url": source_url,
-        "transformation": "center crop and resize to 1000x1500 PNG",
+        "smart_crop_centering": list(centering),
+        "transformation": (
+            "smart crop to 1000x1500, subtle bottom gradient, destination title, "
+            "BookingsBeacon beacon mark and bookingsbeacon.com"
+        ),
         "usage_note": (
             "Source provenance recorded for review. Verify the provider's current "
             "license/terms and any attribution requirements before publication."
@@ -114,10 +254,10 @@ async def generate_image(
     retry: bool = False,
 ) -> tuple[str, str]:
     """
-    Generate a Pinterest-ready image from an approved real-photo source.
+    Prepare a branded Pinterest image from an approved real-photo source.
 
-    Phase 2 intentionally refuses unapproved/unknown image sources. There is no
-    automatic AI-image fallback here.
+    Phase 2 refuses unknown/unapproved image sources and performs no automatic
+    AI-image fallback.
     """
     match = _find_curated_source(brief.target_keyword)
     if match is None:
@@ -133,7 +273,12 @@ async def generate_image(
         brief.target_keyword,
     )
 
-    image_bytes = await _download_and_crop(source["source_url"])
+    image = await _download_and_smart_crop(source["source_url"], destination)
+    image = await _apply_bookingsbeacon_template(image, brief.target_keyword)
+
+    output = io.BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    image_bytes = output.getvalue()
     image_hash = hashlib.sha256(image_bytes).hexdigest()
 
     assets_dir = Path(config.get("paths", {}).get("assets_dir", "assets"))
@@ -150,5 +295,5 @@ async def generate_image(
         source_url=source["source_url"],
     )
 
-    logger.info("Prepared curated image: %s", image_path)
+    logger.info("Prepared branded curated image: %s", image_path)
     return str(image_path), image_hash
