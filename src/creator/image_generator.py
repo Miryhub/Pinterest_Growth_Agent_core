@@ -13,7 +13,7 @@ from src.models import ContentBrief
 logger = logging.getLogger(__name__)
 
 CANVAS_SIZE = (1000, 1500)
-BRAND_MARK_URL = "https://bookingsbeacon.com/beacon-mark.png"
+BRAND_MARK_PATH = Path("assets/brand/beacon-mark.png")
 
 # (horizontal, vertical) focal point used by Pillow ImageOps.fit.
 # Higher vertical values keep more of the lower part of a source photo.
@@ -141,8 +141,10 @@ async def _download_and_smart_crop(url: str, destination: str) -> Image.Image:
 
 async def _load_brand_mark() -> Image.Image | None:
     try:
-        raw = await _download_bytes(BRAND_MARK_URL)
-        with Image.open(io.BytesIO(raw)) as mark:
+        if not BRAND_MARK_PATH.exists():
+            raise FileNotFoundError(BRAND_MARK_PATH)
+
+        with Image.open(BRAND_MARK_PATH) as mark:
             mark = mark.convert("RGBA")
             mark.thumbnail((82, 82), Image.Resampling.LANCZOS)
             return mark.copy()
