@@ -8,6 +8,47 @@ from src.models import ContentBrief
 
 logger = logging.getLogger(__name__)
 
+DESTINATION_PROMPTS = {
+    "paris": (
+        "Paris, France, authentic Haussmann architecture, Eiffel Tower visible in correct proportions, "
+        "elegant Parisian street scene, soft natural daylight, realistic travel editorial photography, "
+        "high-end tourism magazine aesthetic, accurate urban details, no fantasy architecture"
+    ),
+    "barcelona": (
+        "Barcelona, Spain, authentic Catalan architecture, Sagrada Familia or Gothic Quarter details, "
+        "Mediterranean daylight, warm stone facades, realistic travel editorial photography, "
+        "high-end tourism magazine aesthetic, accurate local architecture, no invented landmarks"
+    ),
+    "bali": (
+        "Bali, Indonesia, authentic tropical landscape, rice terraces or Uluwatu coastal scenery, "
+        "traditional Balinese temple details, lush vegetation, natural tropical light, realistic travel editorial photography, "
+        "high-end tourism magazine aesthetic, no generic Chinese or Japanese architecture"
+    ),
+    "marrakech": (
+        "Marrakech, Morocco, authentic Medina or riad architecture, warm terracotta walls, carved Moroccan doors, "
+        "subtle zellige details, natural golden light, realistic travel editorial photography, "
+        "high-end tourism magazine aesthetic, accurate Moroccan design, no fantasy towers"
+    ),
+    "dubai": (
+        "Dubai, United Arab Emirates, authentic modern skyline, Burj Khalifa or Dubai Marina context, "
+        "clean contemporary architecture, desert haze, realistic travel editorial photography, "
+        "high-end tourism magazine aesthetic, correct landmark proportions, no fictional skyscrapers"
+    ),
+}
+
+
+def _destination_prompt(keyword: str) -> str:
+    lower = keyword.lower()
+    for name, prompt in DESTINATION_PROMPTS.items():
+        if name in lower:
+            return prompt
+
+    return (
+        f"{keyword}, authentic destination-specific travel scene, realistic local architecture and landscape, "
+        "natural light, premium travel editorial photography, accurate geography and landmark details, "
+        "no fantasy elements, no invented architecture"
+    )
+
 
 def _get_negative_prompts() -> str:
     path = Path("negative_prompts.txt")
