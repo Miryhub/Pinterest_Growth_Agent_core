@@ -153,9 +153,9 @@ def review_regenerate_image(pin_id: int):
 
     image_path, image_hash = asyncio.run(generate_image(brief, config, retry=True))
 
-    if db.hash_exists(image_hash):
+    if db.hash_exists(image_hash, exclude_pin_id=pin_id):
         raise typer.BadParameter(
-            "The image service returned a duplicate image. Run the command again for another variation."
+            "Another Pin already uses this exact image."
         )
 
     db.update_pin_fields(
