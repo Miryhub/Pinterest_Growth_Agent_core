@@ -50,22 +50,42 @@ class PinterestSandboxPublisher:
             raise RuntimeError("PINTEREST_SANDBOX_BOARD_ID is not set")
         return token, board_id
 
-    @staticmethod
-    def _destination_link(pin: Pin) -> str:
-        """Build the BookingsBeacon destination URL for this Pin."""
+    DESTINATION_COUNTRY_SLUGS = {
+        "paris": "france",
+        "barcelona": "spain",
+        "bali": "indonesia",
+        "marrakech": "morocco",
+        "dubai": "united-arab-emirates",
+        "london": "united-kingdom",
+        "rome": "italy",
+        "lisbon": "portugal",
+        "amsterdam": "netherlands",
+        "istanbul": "turkiye",
+    }
+
+    @classmethod
+    def _destination_link(cls, pin: Pin) -> str:
+        """Build the canonical BookingsBeacon destination URL for this Pin."""
         keyword = (pin.target_keyword or "").strip().lower()
         for suffix in (" travel guide", " guide"):
             if keyword.endswith(suffix):
                 keyword = keyword[: -len(suffix)].strip()
                 break
 
-        slug = "-".join(
+        city_slug = "-".join(
             part for part in keyword.replace("_", " ").split() if part
         )
-        if not slug:
+        if not city_slug:
             return "https://bookingsbeacon.com"
 
-        return f"https://bookingsbeacon.com/destinations/{slug}"
+        country_slug = cls.DESTINATION_COUNTRY_SLUGS.get(city_slug)
+        if country_slug:
+            return (
+                "https://bookingsbeacon.com/destinations/"
+                f"{country_slug}/{city_slug}"
+            )
+
+        return "https://bookingsbeacon.com/destinations"
 
     @staticmethod
     def _image_media_source(image_path: str) -> dict:
@@ -82,6 +102,64 @@ class PinterestSandboxPublisher:
             "content_type": mime_type,
             "data": encoded,
         }
+
+    async def update_link(self, pin_id: int) -> str:
+        """Update the destination link for a previously published Sandbox Pin."""
+        self._validate_enabled()
+
+        pin = self.db.get_pin(pin_id)
+        if pin is None:
+            raise ValueError(f"Pin {pin_id} not found")
+        if pin.status != "PUBLISHED":
+            raise ValueError(
+                f"Pin {pin_id} must be PUBLISHED before updating its Sandbox link; "
+                f"current status is {pin.status}"
+            )
+
+        sandbox_ref = (pin.pinterest_url or "").strip()
+        if not sandbox_ref.startswith("sandbox:"):
+            raise ValueError(
+                f"Pin {pin_id} does not have a Pinterest Sandbox reference"
+            )
+
+        pinterest_id = sandbox_ref.split(":", 1)[1].strip()
+        if not pinterest_id:
+            raise ValueError("Missing Pinterest Sandbox Pin id")
+
+        token, _ = self._credentials()
+        settings = self._settings()
+        endpoint = (
+            settings["api_base_url"].rstrip("/")
+            + f"/pins/{pinterest_id}"
+        )
+
+        payload = {"link": self._destination_link(pin)}
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.patch(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"Pinterest Sandbox returned HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+
+        self.db.log_action(
+            "sandbox_link_updated",
+            {
+                "pin_id": pin_id,
+                "pinterest_id": pinterest_id,
+                "link": payload["link"],
+            },
+        )
+        return payload["link"]
 
     async def publish(self, pin_id: int) -> str:
         self._validate_enabled()
