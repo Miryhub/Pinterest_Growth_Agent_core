@@ -51,6 +51,23 @@ class PinterestSandboxPublisher:
         return token, board_id
 
     @staticmethod
+    def _destination_link(pin: Pin) -> str:
+        """Build the BookingsBeacon destination URL for this Pin."""
+        keyword = (pin.target_keyword or "").strip().lower()
+        for suffix in (" travel guide", " guide"):
+            if keyword.endsWith(suffix):
+                keyword = keyword[: -len(suffix)].strip()
+                break
+
+        slug = "-".join(
+            part for part in keyword.replace("_", " ").split() if part
+        )
+        if not slug:
+            return "https://bookingsbeacon.com"
+
+        return f"https://bookingsbeacon.com/destinations/{slug}"
+
+    @staticmethod
     def _image_media_source(image_path: str) -> dict:
         path = Path(image_path)
         if not path.exists():
@@ -79,6 +96,7 @@ class PinterestSandboxPublisher:
             "title": pin.title[:100],
             "description": pin.description[:500],
             "alt_text": pin.alt_text[:500],
+            "link": self._destination_link(pin),
             "media_source": self._image_media_source(pin.image_path),
         }
 
