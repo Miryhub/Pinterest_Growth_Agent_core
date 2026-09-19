@@ -79,13 +79,20 @@ class PinterestSandboxPublisher:
             return "https://bookingsbeacon.com"
 
         country_slug = cls.DESTINATION_COUNTRY_SLUGS.get(city_slug)
+        utm = (
+            "?utm_source=pinterest"
+            "&utm_medium=organic"
+            "&utm_campaign=destination_pins"
+        )
+
         if country_slug:
             return (
                 "https://bookingsbeacon.com/destinations/"
                 f"{country_slug}/{city_slug}"
+                f"{utm}"
             )
 
-        return "https://bookingsbeacon.com/destinations"
+        return f"https://bookingsbeacon.com/destinations{utm}"
 
     @staticmethod
     def _image_media_source(image_path: str) -> dict:
