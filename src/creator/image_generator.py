@@ -62,7 +62,7 @@ CURATED_DESTINATION_IMAGES = {
     },
     "lisbon": {
         "provider": "Unsplash",
-        "source_url": "https://images.unsplash.com/photo-1555881400-74d7acaacd8b?auto=format&fit=crop&w=1800&q=88",
+        "source_url": "https://images.unsplash.com/photo-1678910079101-1a5f4b1d16fd?auto=format&fit=crop&w=1800&q=88",
     },
     "amsterdam": {
         "provider": "Unsplash",
@@ -322,7 +322,10 @@ async def generate_image(
     assets_dir.mkdir(parents=True, exist_ok=True)
 
     image_path = assets_dir / f"{image_hash}.png"
-    image_path.write_bytes(image_bytes)
+    if not image_path.exists():
+        image_path.write_bytes(image_bytes)
+    else:
+        logger.info("Image file already exists; reusing %s", image_path)
 
     _write_source_metadata(
         image_path,
