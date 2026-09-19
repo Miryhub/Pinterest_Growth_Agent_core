@@ -263,6 +263,23 @@ class Database:
     def get_pending_pins(self) -> list[Pin]:
         return self.get_pins_by_status("PENDING_REVIEW")
 
+    def get_existing_pin_keywords(self) -> set[str]:
+        """Return normalized target keywords already represented by any Pin."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """SELECT DISTINCT target_keyword FROM pins
+                   WHERE target_keyword IS NOT NULL
+                     AND TRIM(target_keyword) != ''"""
+            ).fetchall()
+            return {
+                row["target_keyword"].strip().lower()
+                for row in rows
+                if row["target_keyword"]
+            }
+        finally:
+            conn.close()
+
     def get_pin(self, pin_id: int) -> Pin | None:
         conn = self._connect()
         try:
