@@ -55,7 +55,7 @@ class PinterestSandboxPublisher:
         """Build the BookingsBeacon destination URL for this Pin."""
         keyword = (pin.target_keyword or "").strip().lower()
         for suffix in (" travel guide", " guide"):
-            if keyword.endsWith(suffix):
+            if keyword.endswith(suffix):
                 keyword = keyword[: -len(suffix)].strip()
                 break
 
