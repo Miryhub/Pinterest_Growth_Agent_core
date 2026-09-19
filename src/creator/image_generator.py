@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 CANVAS_SIZE = (1000, 1500)
 BRAND_MARK_PATH = Path("assets/brand/beacon-mark.png")
+BRAND_LOGO_PATH = Path("assets/brand/bookingsbeacon-logo.png")
 
 # (horizontal, vertical) focal point used by Pillow ImageOps.fit.
 # Higher vertical values keep more of the lower part of a source photo.
@@ -146,10 +147,26 @@ async def _load_brand_mark() -> Image.Image | None:
 
         with Image.open(BRAND_MARK_PATH) as mark:
             mark = mark.convert("RGBA")
-            mark.thumbnail((82, 82), Image.Resampling.LANCZOS)
+            mark.thumbnail((120, 120), Image.Resampling.LANCZOS)
+            logger.info("Loaded BookingsBeacon beacon mark from %s", BRAND_MARK_PATH)
             return mark.copy()
     except Exception as exc:
         logger.warning("Could not load BookingsBeacon beacon mark: %s", exc)
+        return None
+
+
+async def _load_brand_logo() -> Image.Image | None:
+    try:
+        if not BRAND_LOGO_PATH.exists():
+            raise FileNotFoundError(BRAND_LOGO_PATH)
+
+        with Image.open(BRAND_LOGO_PATH) as logo:
+            logo = logo.convert("RGBA")
+            logo.thumbnail((520, 150), Image.Resampling.LANCZOS)
+            logger.info("Loaded BookingsBeacon full logo from %s", BRAND_LOGO_PATH)
+            return logo.copy()
+    except Exception as exc:
+        logger.warning("Could not load BookingsBeacon full logo: %s", exc)
         return None
 
 
@@ -195,23 +212,44 @@ async def _apply_bookingsbeacon_template(
         stroke_fill=(0, 0, 0, 105),
     )
 
-    mark = await _load_brand_mark()
-    brand_y = 1400
-    brand_x = 68
-    if mark is not None:
-        mark_y = brand_y - 56
-        canvas.alpha_composite(mark, (brand_x, mark_y))
-        brand_x += mark.width + 18
+    logo = await _load_brand_logo()
+    mark = None
 
-    draw = ImageDraw.Draw(canvas)
-    draw.text(
-        (brand_x, brand_y - 35),
-        "bookingsbeacon.com",
-        font=small_font,
-        fill=(255, 255, 255, 230),
-        stroke_width=1,
-        stroke_fill=(0, 0, 0, 90),
-    )
+    if logo is not None:
+        # Put the full BookingsBeacon logo on a subtle cream translucent plate
+        # so it stays visible over both dark and light photos.
+        plate_pad_x = 26
+        plate_pad_y = 16
+        plate_x = 58
+        plate_y = 1322
+        plate_w = logo.width + (plate_pad_x * 2)
+        plate_h = logo.height + (plate_pad_y * 2)
+
+        plate = Image.new("RGBA", (plate_w, plate_h), (248, 241, 228, 225))
+        canvas.alpha_composite(plate, (plate_x, plate_y))
+        canvas.alpha_composite(
+            logo,
+            (plate_x + plate_pad_x, plate_y + plate_pad_y),
+        )
+    else:
+        mark = await _load_brand_mark()
+        brand_y = 1400
+        brand_x = 68
+
+        if mark is not None:
+            mark_y = brand_y - 76
+            canvas.alpha_composite(mark, (brand_x, mark_y))
+            brand_x += mark.width + 18
+
+        draw = ImageDraw.Draw(canvas)
+        draw.text(
+            (brand_x, brand_y - 35),
+            "bookingsbeacon.com",
+            font=small_font,
+            fill=(255, 255, 255, 230),
+            stroke_width=1,
+            stroke_fill=(0, 0, 0, 90),
+        )
 
     return canvas.convert("RGB")
 
