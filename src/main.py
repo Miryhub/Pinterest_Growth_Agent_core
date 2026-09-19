@@ -229,6 +229,96 @@ def review_edit(
     )
 
 
+
+@app.command("sandbox-preflight")
+def sandbox_preflight(pin_id: int = typer.Option(1, "--pin-id")):
+    """Check Pinterest Sandbox readiness without publishing anything."""
+    config = load_config()
+    db = Database(config["paths"]["database"])
+    db.initialize()
+
+    settings = config.get("publishing", {})
+    checks: list[tuple[str, bool, str]] = []
+
+    enabled = bool(settings.get("enabled", False))
+    checks.append((
+        "Publishing enabled",
+        enabled,
+        "enabled" if enabled else "disabled in config.yaml",
+    ))
+
+    environment = settings.get("environment", "")
+    checks.append((
+        "Sandbox environment",
+        environment == "sandbox",
+        environment or "missing",
+    ))
+
+    base_url = settings.get("api_base_url", "")
+    checks.append((
+        "Sandbox API URL",
+        "api-sandbox.pinterest.com" in base_url,
+        base_url or "missing",
+    ))
+
+    token = os.getenv("PINTEREST_SANDBOX_ACCESS_TOKEN", "").strip()
+    checks.append((
+        "Sandbox access token",
+        bool(token),
+        "set" if token else "missing",
+    ))
+
+    board_id = os.getenv("PINTEREST_SANDBOX_BOARD_ID", "").strip()
+    checks.append((
+        "Sandbox board ID",
+        bool(board_id),
+        board_id if board_id else "missing",
+    ))
+
+    pin = db.get_pin(pin_id)
+    if pin is None:
+        checks.append(("Pin exists", False, f"Pin #{pin_id} not found"))
+    else:
+        checks.append(("Pin exists", True, f"Pin #{pin_id}"))
+        checks.append((
+            "Pin approved",
+            pin.status == "APPROVED",
+            pin.status,
+        ))
+        image_path = Path(pin.image_path)
+        checks.append((
+            "Pin image exists",
+            image_path.exists(),
+            str(image_path),
+        ))
+
+    table = Table(title="Pinterest Sandbox Preflight")
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Details")
+
+    all_ok = True
+    for name, ok, details in checks:
+        all_ok = all_ok and ok
+        table.add_row(
+            name,
+            "[green]OK[/green]" if ok else "[red]MISSING[/red]",
+            details,
+        )
+
+    console.print(table)
+    if all_ok:
+        console.print(
+            "[bold green]Sandbox preflight passed.[/bold green] "
+            "Nothing was published."
+        )
+    else:
+        console.print(
+            "[bold yellow]Sandbox is not ready yet.[/bold yellow] "
+            "Nothing was published."
+        )
+
+
 @app.command("publish-sandbox")
 def publish_sandbox(pin_id: int):
     """Publish one APPROVED Pin to Pinterest Sandbox after explicit confirmation."""
