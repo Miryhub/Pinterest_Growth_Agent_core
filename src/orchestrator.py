@@ -77,8 +77,22 @@ async def run_daily_cycle(db: Database, config: dict, force: bool = False) -> No
         limits = get_daily_limits(created_date)
         seo_percent = config.get("strategy", {}).get("seo_percent", 70)
 
+        existing_pin_keywords = db.get_existing_pin_keywords()
+        available_keywords = [
+            keyword
+            for keyword in keywords
+            if keyword.term.strip().lower() not in existing_pin_keywords
+        ]
+
+        skipped_existing = len(keywords) - len(available_keywords)
+        if skipped_existing:
+            logger.info(
+                "Skipped %s keyword candidates already represented by existing Pins",
+                skipped_existing,
+            )
+
         briefs = select_todays_content(
-            keywords,
+            available_keywords,
             trends,
             limits.max_pins,
             seo_percent,
