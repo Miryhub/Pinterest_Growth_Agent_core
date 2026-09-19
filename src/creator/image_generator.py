@@ -182,7 +182,7 @@ async def _apply_bookingsbeacon_template(
     gradient_height = CANVAS_SIZE[1] - gradient_top
     for offset in range(gradient_height):
         progress = offset / max(gradient_height - 1, 1)
-        alpha = int(18 + (168 * progress))
+        alpha = int(10 + (138 * progress))
         ImageDraw.Draw(overlay).line(
             [(0, gradient_top + offset), (CANVAS_SIZE[0], gradient_top + offset)],
             fill=(5, 12, 18, alpha),
@@ -192,8 +192,8 @@ async def _apply_bookingsbeacon_template(
     canvas = Image.alpha_composite(canvas, overlay)
     draw = ImageDraw.Draw(canvas)
 
-    title_font = _load_font(64, bold=True)
-    small_font = _load_font(30, bold=False)
+    title_font = _load_font(56, bold=True)
+    small_font = _load_font(28, bold=False)
 
     title = _display_title(keyword)
     wrapped = textwrap.wrap(title, width=24)
@@ -201,7 +201,7 @@ async def _apply_bookingsbeacon_template(
         wrapped = wrapped[:2]
     title_text = "\n".join(wrapped)
 
-    title_y = 1190 if len(wrapped) == 1 else 1115
+    title_y = 1210 if len(wrapped) == 1 else 1140
     draw.multiline_text(
         (68, title_y),
         title_text,
@@ -233,13 +233,13 @@ async def _apply_bookingsbeacon_template(
         )
     else:
         mark = await _load_brand_mark()
-        brand_y = 1400
+        brand_y = 1405
         brand_x = 68
 
         if mark is not None:
-            mark_y = brand_y - 76
+            mark_y = brand_y - 70
             canvas.alpha_composite(mark, (brand_x, mark_y))
-            brand_x += mark.width + 18
+            brand_x += mark.width + 10
 
         draw = ImageDraw.Draw(canvas)
         draw.text(
