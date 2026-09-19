@@ -319,6 +319,25 @@ def sandbox_preflight(pin_id: int = typer.Option(1, "--pin-id")):
         )
 
 
+@app.command("update-sandbox-link")
+def update_sandbox_link(pin_id: int):
+    """Update the destination link of one already-published Sandbox Pin."""
+    config = load_config()
+    db = Database(config["paths"]["database"])
+    db.initialize()
+
+    publisher = PinterestSandboxPublisher(db, config)
+    try:
+        link = asyncio.run(publisher.update_link(pin_id))
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+        raise typer.BadParameter(str(exc))
+
+    console.print(
+        f"[bold green]Pin #{pin_id} Sandbox link updated.[/bold green] "
+        f"{link}"
+    )
+
+
 @app.command("publish-sandbox")
 def publish_sandbox(pin_id: int):
     """Publish one APPROVED Pin to Pinterest Sandbox after explicit confirmation."""
